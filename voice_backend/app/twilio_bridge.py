@@ -136,7 +136,8 @@ def stream_token_ok(token: str, now: Optional[float] = None) -> bool:
     return hmac.compare_digest(mac, expected) and -5 <= age <= TOKEN_TTL_S
 
 
-def build_phone_agent(system_prompt: Optional[str] = None) -> AgentSession:
+def build_phone_agent(system_prompt: Optional[str] = None, tts_rate: int = PHONE_RATE) -> AgentSession:
+    """The agent for a call. `tts_rate` is the sample rate of the audio it speaks (8 kHz on the phone)."""
     asr: FennecWSClient | InworldSTTClient
     if settings.asr_provider == "fennec":
         asr = FennecWSClient(api_key=settings.fennec_api_key, sample_rate=ASR_RATE, channels=1, vad=DEFAULT_VAD)
@@ -161,7 +162,7 @@ def build_phone_agent(system_prompt: Optional[str] = None) -> AgentSession:
         api_key_basic_b64=settings.inworld_api_key,
         model_id=settings.inworld_model_id,
         voice_id=settings.inworld_voice_id,
-        sample_rate_hz=PHONE_RATE,
+        sample_rate_hz=tts_rate,
         language=settings.inworld_language or None,
         instruction=settings.inworld_instruction or None,
     )

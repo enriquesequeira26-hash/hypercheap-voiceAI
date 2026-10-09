@@ -18,6 +18,7 @@ import io
 import json
 import logging
 import re
+import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -322,6 +323,38 @@ async def save_status(cid: str, call_sid: str, status: str, duration: str) -> No
 
 async def save_stream(cid: str, call_sid: str, doc: dict) -> None:
     await store.put_json(f"{call_dir(cid, call_sid)}/stream.json", doc)
+
+
+class Transcript:
+    """Collects what was said in a call from the agent callbacks."""
+
+    def __init__(self) -> None:
+        self.lines: list[dict] = []  # {"quien": "agente" | "cliente", "texto": ..., "t": seconds}
+        self.started = time.time()
+        self._reply = ""
+
+    def _add(self, who: str, text: str) -> None:
+        self.lines.append({"quien": who, "texto": text, "t": round(time.time() - self.started, 1)})
+
+    def heard(self, text: str) -> None:
+        """The customer finished a sentence (this also closes a reply they interrupted)."""
+        self.flush(interrupted=True)
+        self._add("cliente", text)
+
+    def token(self, tok: str) -> None:
+        self._reply += tok
+
+    def flush(self, interrupted: bool = False) -> str:
+        """Closes the reply the agent was saying and returns its text ('' when there was none)."""
+        text = END_RE.sub("", self._reply).strip()
+        self._reply = ""
+        if text:
+            self._add("agente", text + (" (interrumpido)" if interrupted else ""))
+        return text
+
+    @property
+    def seconds(self) -> int:
+        return int(time.time() - self.started)
 
 
 def transcript_text(lines: list[dict]) -> str:

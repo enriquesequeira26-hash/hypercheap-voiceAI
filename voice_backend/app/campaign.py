@@ -9,25 +9,30 @@ Telesales campaign: a supervised dialer for the customers of the Excel workbook.
   GET  /campana/api/llamada/{cid}      Progress and result of the last call to a customer.
   GET  /campana/api/excel              The workbook with the results filled in.
   GET  /campana/api/grabacion/{sid}    Audio of a recorded call.
+  WS   /ws/ensayo                      Rehearsal from the browser: the microphone plays the customer. No Twilio.
 
 Every /campana/api route requires the header x-call-key = CALL_API_KEY.
 """
 
 import asyncio
+import contextlib
+import json
 import logging
 import re
+import uuid
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
 from . import campaign_data as cd
 from . import store
+from .agent.llm_client import SYSTEM_PROMPT
 from .campaign_page import PAGE
 from .config import settings
-from .twilio_bridge import E164, _base_url, key_ok, place_call, twilio_ready
+from .twilio_bridge import E164, _base_url, build_phone_agent, key_ok, place_call, twilio_ready
 
 log = logging.getLogger("hypercheap.campaign")
 router = APIRouter()
@@ -195,15 +200,25 @@ async def llamada(cid: str, forzar: int = 0):
         raise HTTPException(502, str(e)) from e
 
 
+async def _load_results(prefix: str) -> list[dict]:
+    paths = [p for p in await store.list_paths(prefix) if p.endswith(".json")]
+    return [r for r in await asyncio.gather(*(store.get_json(p) for p in paths)) if r]
+
+
 @api.get("/excel", dependencies=[Depends(require_store)])
-async def excel(request: Request):
+async def excel(request: Request, ensayos: int = 0):
+    """`ensayos=1` also writes the rehearsals, marked as such, for customers without a real call."""
     try:
         data = await store.get_bytes("campaign/base.xlsx")
         if not data:
             raise HTTPException(400, "Primero suba el Excel con la base de clientes.")
-        prefix = "campaign/results/"
-        paths = [p for p in await store.list_paths(prefix) if p.endswith(".json")]
-        results = [r for r in await asyncio.gather(*(store.get_json(p) for p in paths)) if r]
+        results = await _load_results("campaign/results/")
+        if ensayos:
+            real = {str(r.get("cid")) for r in results}
+            for res in await _load_results("campaign/rehearsals/"):
+                if str(res.get("cid")) not in real:
+                    res["resumen"] = "[ENSAYO] " + (res.get("resumen") or "")
+                    results.append(res)
     except store.StoreError as e:
         raise HTTPException(502, str(e)) from e
     filled = await asyncio.to_thread(cd.fill_workbook, data, results, f"{_base_url(request)}/campana")
@@ -229,6 +244,121 @@ async def grabacion(sid: str):
     if resp.status_code >= 400:
         raise HTTPException(502, f"Twilio respondió {resp.status_code} al pedir la grabación.")
     return Response(resp.content, media_type="audio/mpeg", headers={"Cache-Control": "private, no-store"})
+
+
+# --- Rehearsal from the browser -----------------------------------------------------------------------------------
+
+
+@router.websocket("/ws/ensayo")
+async def ws_ensayo(ws: WebSocket):
+    """
+    A campaign call without the phone: the browser sends the microphone (16 kHz PCM16) and plays the agent.
+    First message: {"type": "start", "key": CALL_API_KEY, "id": customer}. The result is kept as a rehearsal.
+    """
+    await ws.accept()
+    agent = None
+    cid = sid = ""
+    transcript = cd.Transcript()
+    timers: list[asyncio.Task] = []
+
+    async def send(obj: dict) -> None:
+        await ws.send_text(json.dumps(obj, ensure_ascii=False))
+
+    async def refuse(detail: str) -> None:
+        with contextlib.suppress(Exception):
+            await send({"type": "error", "detalle": detail})
+
+    async def on_asr_final(text: str) -> None:
+        transcript.heard(text)
+        await send({"type": "cliente", "texto": text})
+
+    async def on_token(tok: str) -> None:
+        transcript.token(tok)
+
+    async def on_turn_done() -> None:
+        text = transcript.flush()
+        if text:
+            await send({"type": "agente", "texto": text})
+        if agent is not None and agent.end_requested:
+            await send({"type": "end"})
+
+    async def on_audio(pcm: bytes) -> None:
+        await ws.send_bytes(pcm)
+
+    async def on_vad(evt: dict) -> None:
+        if evt.get("type") == "utterance" and evt.get("phase") == "begin":
+            await send({"type": "clear"})  # the person started talking: stop playing the agent
+
+    async def time_limit() -> None:
+        await asyncio.sleep(settings.call_max_seconds)
+        with contextlib.suppress(Exception):
+            await send({"type": "end"})
+
+    try:
+        first = json.loads(await asyncio.wait_for(ws.receive_text(), timeout=15))
+        if first.get("type") != "start" or not key_ok(str(first.get("key", ""))):
+            return await refuse("Clave incorrecta.")
+        if not store.ready():
+            return await refuse("Falta conectar el almacenamiento (Vercel Blob) al proyecto.")
+        if settings.missing_keys():
+            return await refuse("Faltan las claves del agente en Vercel.")
+        client = await cd.find_client(str(first.get("id", "")))
+        batch = await store.get_json("campaign/batch.json", default={}) or {}
+        if not client or client["id"] not in batch.get("ids", []):
+            return await refuse("Ese cliente no está en el lote actual.")
+
+        cid, sid = client["id"], "WEB" + uuid.uuid4().hex
+        prompt = (settings.agent_system_prompt or SYSTEM_PROMPT).strip() + cd.call_prompt(client)
+        agent = build_phone_agent(prompt, tts_rate=settings.inworld_sample_rate)
+        await agent.start(
+            on_asr_final=on_asr_final,
+            on_token=on_token,
+            on_audio_chunk=on_audio,
+            on_turn_done=on_turn_done,
+            on_vad=on_vad,
+        )
+        await cd.save_attempt(cid, sid, "navegador", rehearsal=True)
+        await send({"type": "ready", "rate": settings.inworld_sample_rate})
+        await agent.speak_first(cd.opening_cue(client, outbound=True))
+        timers.append(asyncio.create_task(time_limit()))
+
+        while True:
+            msg = await ws.receive()
+            if msg["type"] == "websocket.disconnect":
+                break
+            if msg.get("bytes"):
+                await agent.feed_pcm(msg["bytes"])
+            elif msg.get("text") and json.loads(msg["text"]).get("type") == "stop":
+                break
+    except (TimeoutError, WebSocketDisconnect):
+        pass
+    except Exception:
+        log.exception("[campaign] rehearsal failed")
+        await refuse("El ensayo se interrumpió por un error.")
+    finally:
+        for timer in timers:
+            timer.cancel()
+        if agent is not None:
+            with contextlib.suppress(Exception):
+                await agent.close()
+        if cid:
+            transcript.flush(interrupted=True)
+            doc = {
+                "cid": cid,
+                "callSid": sid,
+                "direccion": "ensayo en navegador",
+                "duracion_s": transcript.seconds,
+                "recordingSid": "",
+                "transcripcion": transcript.lines,
+                "terminada": True,
+            }
+            try:
+                await cd.save_stream(cid, sid, doc)
+                await cd.save_status(cid, sid, "completed", str(transcript.seconds))
+            except Exception as e:
+                log.error("[campaign] could not save the rehearsal: %s", e)
+        with contextlib.suppress(Exception):
+            await ws.close()
 
 
 router.include_router(api)
