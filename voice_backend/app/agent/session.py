@@ -204,6 +204,19 @@ class AgentSession:
                             spoke = True
 
                 tail = buf.strip()
+                if tail and getattr(self._llm, "last_finish_reason", None) == "length":
+                    # The reply ran out of tokens: never speak half a sentence. Keep what ends in punctuation.
+                    cut = max(tail.rfind(ch) for ch in ".!?…")
+                    kept = tail[: cut + 1] if cut >= 0 else ""
+                    if kept or spoke:
+                        logger.warning(
+                            "[session] reply cut by the LLM; unfinished text not spoken: %r", tail[len(kept) :]
+                        )
+                        # Keep the history in line with what was actually said
+                        whole = "".join(reply_parts).rstrip()
+                        if whole.endswith(tail):
+                            reply_parts[:] = [whole[: len(whole) - len(tail) + len(kept)]]
+                        tail = kept
                 if tail:
                     await seg_q.put(tail)
             except asyncio.CancelledError:
