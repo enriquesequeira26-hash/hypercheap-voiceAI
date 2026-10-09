@@ -1,5 +1,22 @@
 # Hypercheap AI Voice Agent
 
+> ## Notas de este fork (octubre 2026)
+>
+> Este fork adapta el proyecto para desplegarlo en **Vercel** y conversar en **español**. Difiere del original en:
+>
+> - **Voz a texto:** usa **Inworld STT** en lugar de Fennec. El servicio de claves de Fennec respondía 503 y su
+>   sitio estaba desconectado, así que no se podían crear claves. Fennec sigue disponible con `ASR_PROVIDER=fennec`.
+> - **Texto a voz:** usa `inworld-tts-2-flash`; Inworld retiró `inworld-tts-1` en junio de 2026.
+> - **Solo dos claves:** `BASETEN_API_KEY` e `INWORLD_API_KEY` (la misma clave de Inworld sirve para escuchar y hablar).
+> - **Costos:** las cifras de costo y latencia de abajo son del stack original y **no** aplican tal cual a este fork.
+>
+> **Desplegar en Vercel:** importe el repositorio, elija `voice_backend` como *Root Directory* y agregue las dos
+> variables de entorno. La interfaz ya viene compilada en `voice_backend/app/static` y se conecta al mismo dominio.
+> Si cambia `voice_frontend`, ejecute `npm run build` y copie `dist/` a `voice_backend/app/static/`.
+> En el plan Hobby, Vercel cierra cada conversación a los 5 minutos; basta con volver a pulsar el micrófono.
+>
+> Todas las opciones (voz, idioma, modelo, detección de turnos, personalidad) están en `voice_backend/.env.example`.
+
 <p align="center">
   <img alt="Hypercheap Voice Agent" src="assets/hero.png" width="900">
 </p>
