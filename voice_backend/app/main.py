@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .agent.fennec_ws import DEFAULT_VAD, FennecWSClient
+from .agent.inworld_stt import InworldSTTClient
 from .agent.inworld_tts import InworldTTS
 from .agent.llm_client import BasetenChat
 from .agent.protocol import (
@@ -42,30 +43,60 @@ async def health():
     return {"ok": True}
 
 
+@app.get("/health/config")
+async def health_config():
+    """Reports which required env vars are missing. Never returns the values themselves."""
+    missing = settings.missing_keys()
+    return {"ok": not missing, "missing": missing}
+
+
 @app.websocket("/ws/agent")
 async def ws_agent(ws: WebSocket):
     await ws.accept()
     await ws.send_text(StatusEvent(message="connected").model_dump_json())
 
+    missing = settings.missing_keys()
+    if missing:
+        detail = "faltan variables de entorno: " + ", ".join(missing)
+        await ws.send_text(StatusEvent(message=f"error: {detail}").model_dump_json())
+        with contextlib.suppress(Exception):
+            await ws.close()
+        return
+
     # Construct components
-    fennec = FennecWSClient(
-        api_key=settings.fennec_api_key,
-        sample_rate=settings.fennec_sample_rate,
-        channels=settings.fennec_channels,
-        vad=DEFAULT_VAD,  # IMPORTANT: request VAD events + cadence
-    )
+    asr: FennecWSClient | InworldSTTClient
+    if settings.asr_provider == "fennec":
+        asr = FennecWSClient(
+            api_key=settings.fennec_api_key,
+            sample_rate=settings.fennec_sample_rate,
+            channels=settings.fennec_channels,
+            vad=DEFAULT_VAD,  # IMPORTANT: request VAD events + cadence
+        )
+    else:
+        asr = InworldSTTClient(
+            api_key_basic_b64=settings.inworld_api_key,
+            sample_rate=settings.fennec_sample_rate,
+            channels=settings.fennec_channels,
+            language=settings.inworld_language or None,
+            model_id=settings.inworld_stt_model_id,
+            end_of_turn_confidence=settings.inworld_stt_eot_confidence,
+            min_end_of_turn_silence_ms=settings.inworld_stt_min_silence_ms,
+            max_turn_silence_ms=settings.inworld_stt_max_silence_ms,
+        )
     llm = BasetenChat(
         api_key=settings.baseten_api_key,
         base_url=settings.baseten_base_url,
         model=settings.baseten_model,
+        system_prompt=settings.agent_system_prompt or None,
     )
     tts = InworldTTS(
         api_key_basic_b64=settings.inworld_api_key,
         model_id=settings.inworld_model_id,
         voice_id=settings.inworld_voice_id,
         sample_rate_hz=settings.inworld_sample_rate,
+        language=settings.inworld_language or None,
     )
-    agent = AgentSession(fennec, llm, tts)
+    agent = AgentSession(asr, llm, tts)
     session_started = False
 
     async def on_asr_final(text: str):
