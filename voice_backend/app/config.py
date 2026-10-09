@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     inworld_sample_rate: int = 48000
     # Language for both STT and TTS: "es", "en", ... Empty = let Inworld auto-detect.
     inworld_language: str = "es"
+    # Tone/delivery direction for TTS, written in English. Only inworld-tts-2 honours it. Empty = none.
+    inworld_instruction: str = ""
 
     # Agent persona. Empty = use the default prompt in agent/llm_client.py
     agent_system_prompt: str = ""
