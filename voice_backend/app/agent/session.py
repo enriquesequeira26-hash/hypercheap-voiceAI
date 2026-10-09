@@ -6,6 +6,7 @@ import time
 from typing import AsyncIterator, Awaitable, Callable, Dict, List, Optional
 
 from .fennec_ws import FennecWSClient
+from .inworld_stt import InworldSTTClient
 from .inworld_tts import InworldTTS
 from .llm_client import BasetenChat
 
@@ -13,7 +14,7 @@ logger = logging.getLogger("hypercheap.session")
 
 
 class AgentSession:
-    def __init__(self, fennec: FennecWSClient, llm: BasetenChat, tts: InworldTTS) -> None:
+    def __init__(self, fennec: FennecWSClient | InworldSTTClient, llm: BasetenChat, tts: InworldTTS) -> None:
         self._fennec = fennec
         self._llm = llm
         self._tts = tts

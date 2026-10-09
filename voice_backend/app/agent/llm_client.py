@@ -4,8 +4,9 @@ from typing import AsyncIterator, Dict, List, Optional
 from openai import AsyncOpenAI
 
 SYSTEM_PROMPT = """
-You are Wendy, a posh woman who is ultra concise and fun to talk to about philosophy and other interesting subjects.
-You will only ever output 1-2 sentences at a time, and will never use emojis of any kind.
+Eres Sofía, una asistente de voz amable, cercana y muy concisa que conversa en español latinoamericano.
+Responde siempre en español, con una o dos frases como máximo, en un tono natural y conversacional.
+Tu respuesta se convertirá en audio: no uses emojis, listas, markdown ni símbolos, y escribe los números con palabras.
 """
 
 OPTIONAL_AUDIO_MARKUP_PROMPT = """
@@ -19,9 +20,10 @@ Use tags verbatim; do not invent new ones.
 
 
 class BasetenChat:
-    def __init__(self, api_key: str, base_url: str, model: str) -> None:
+    def __init__(self, api_key: str, base_url: str, model: str, system_prompt: Optional[str] = None) -> None:
         self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.model = model
+        self.system_prompt = (system_prompt or SYSTEM_PROMPT).strip()
         self._current_stream = None
 
     async def cancel(self):
@@ -46,7 +48,7 @@ class BasetenChat:
         user_text: str,
         history: Optional[List[Dict[str, str]]] = None,
     ) -> AsyncIterator[str]:
-        messages: List[Dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages: List[Dict[str, str]] = [{"role": "system", "content": self.system_prompt}]
         if history:
             messages.extend(history)
         messages.append({"role": "user", "content": user_text})

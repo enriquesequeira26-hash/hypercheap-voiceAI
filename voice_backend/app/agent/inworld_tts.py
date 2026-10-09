@@ -14,14 +14,16 @@ class InworldTTS:
     def __init__(
         self,
         api_key_basic_b64: str,
-        model_id: str = "inworld-tts-1",
+        model_id: str = "inworld-tts-2-flash",
         voice_id: str = "Ashley",
         sample_rate_hz: int = 48000,
+        language: Optional[str] = None,
     ) -> None:
         self._auth = f"Basic {api_key_basic_b64}"
         self._model = model_id
         self._voice = voice_id
         self._sr = sample_rate_hz
+        self._language = language
         self._url = "https://api.inworld.ai/tts/v1/voice:stream"
         self._active_resp: Optional[httpx.Response] = None
         self._stop_evt = asyncio.Event()
@@ -53,16 +55,18 @@ class InworldTTS:
 
         self._stop_evt.clear()
 
-        payload = {
+        # LINEAR16: every streamed chunk carries its own 44-byte WAV header (stripped below).
+        payload: dict = {
             "text": text,
             "voiceId": self._voice,
             "modelId": self._model,
-            "temperature": 1.2,
-            "audio_config": {
-                "audio_encoding": "LINEAR16",
-                "sample_rate_hertz": self._sr,
+            "audioConfig": {
+                "audioEncoding": "LINEAR16",
+                "sampleRateHertz": self._sr,
             },
         }
+        if self._language:
+            payload["language"] = self._language
 
         headers = {
             "Authorization": self._auth,
@@ -80,7 +84,11 @@ class InworldTTS:
                         continue
                     try:
                         obj = json.loads(line)
-                        data_b64 = obj.get("result", {}).get("audioContent")
+                        if obj.get("error"):
+                            # Inworld can report errors as NDJSON lines after an HTTP 200
+                            logger.error("[inworld] stream error: %s", obj["error"])
+                            continue
+                        data_b64 = (obj.get("result") or {}).get("audioContent")
                         if not data_b64:
                             continue
                         wav_bytes = base64.b64decode(data_b64)
