@@ -4,7 +4,18 @@
 import { startMic } from '../audio/mic'
 import playerCode from '../worklets/pcm-player.js?raw'
 
-const WS_URL = import.meta.env.VITE_AGENT_WS_URL || 'ws://localhost:8000/ws/agent'
+// Resolution order:
+//  1. VITE_AGENT_WS_URL, if set at build time
+//  2. `vite dev`: the local backend on port 8000
+//  3. production build: same origin as the page (the backend serves this UI)
+function resolveWsUrl(): string {
+  const fromEnv = import.meta.env.VITE_AGENT_WS_URL
+  if (fromEnv) return fromEnv
+  if (import.meta.env.DEV) return 'ws://localhost:8000/ws/agent'
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${window.location.host}/ws/agent`
+}
+const WS_URL = resolveWsUrl()
 const RAMP_MS = 250
 
 // ----- VAD tuning & debug -----
