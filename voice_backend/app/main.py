@@ -21,6 +21,7 @@ from .agent.protocol import (
     TurnDoneEvent,
 )
 from .agent.session import AgentSession
+from .campaign import router as campaign_router
 from .config import settings
 from .twilio_bridge import router as twilio_router
 
@@ -178,7 +179,9 @@ async def ws_agent(ws: WebSocket):
             await ws.close()
 
 
-# Phone calls (Twilio). Registered before the static mount so its routes are not shadowed.
+# Phone calls (Twilio) and the telesales campaign panel. Registered before the static mount so their routes
+# are not shadowed.
 app.include_router(twilio_router)
+app.include_router(campaign_router)
 
 app.mount("/", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static"), html=True), name="static")

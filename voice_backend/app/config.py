@@ -53,6 +53,21 @@ class Settings(BaseSettings):
     # Public https address of this deployment as Twilio reaches it. Empty = taken from the request.
     public_base_url: str = ""
 
+    # Phone calls: record them at Twilio and tell the other person so in the greeting.
+    call_recording: bool = True
+    # Hard limit for one phone call, in seconds.
+    call_max_seconds: int = 420
+
+    # Telesales campaign (/campana). Results are kept in a private Vercel Blob store; Vercel adds this
+    # variable when the store is connected to the project.
+    blob_read_write_token: str = ""
+    # Local folder used instead of the Blob store (development only).
+    campaign_local_dir: str = ""
+    # Campaign calls are only placed Monday to Saturday between these local hours.
+    call_hours: str = "8-18"
+    # Costa Rica is UTC-6 all year.
+    call_utc_offset: int = -6
+
     def missing_keys(self) -> list[str]:
         """Names of the required env vars that are not set (never returns values)."""
         required = {
