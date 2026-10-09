@@ -25,6 +25,7 @@ from typing import Any, Optional
 from openai import AsyncOpenAI
 
 from . import store
+from .agent.llm_client import reasoning_options
 from .config import settings
 
 log = logging.getLogger("hypercheap.campaign")
@@ -404,20 +405,28 @@ async def analyze(lines: list[dict]) -> dict:
     today = now_local()
     weekday = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")[today.weekday()]
     prompt = ANALYSIS_PROMPT.replace("{hoy}", f"{weekday} {today:%Y-%m-%d}")
+    request: dict = dict(
+        model=settings.baseten_model,
+        messages=[
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": "Transcripción:\n" + transcript_text(lines)},
+        ],
+        temperature=0,
+    )
+    raw: dict = {}
     try:
-        resp = await client.chat.completions.create(
-            model=settings.baseten_model,
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": "Transcripción:\n" + transcript_text(lines)},
-            ],
-            temperature=0,
-            max_tokens=700,
-        )
-        raw = _parse_json(resp.choices[0].message.content or "")
-    except Exception as e:
-        log.error("[campaign] analysis failed: %s", e)
-        raw = {}
+        # First a direct answer; if that fails, once more with the model's default reasoning and a larger
+        # budget (hidden reasoning counts against max_tokens, which is what used to leave the JSON unfinished).
+        direct = {"max_tokens": 1500, **reasoning_options(settings.baseten_reasoning_effort)}
+        for options in (direct, {"max_tokens": 8000}):
+            try:
+                resp = await client.chat.completions.create(**request, **options)
+                raw = _parse_json(resp.choices[0].message.content or "")
+                if raw:
+                    break
+                log.warning("[campaign] analysis gave no JSON (finish=%s)", resp.choices[0].finish_reason)
+            except Exception as e:
+                log.error("[campaign] analysis failed: %s", e)
     finally:
         await client.close()
 

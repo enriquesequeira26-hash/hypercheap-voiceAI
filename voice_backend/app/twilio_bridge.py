@@ -157,6 +157,8 @@ def build_phone_agent(system_prompt: Optional[str] = None, tts_rate: int = PHONE
         base_url=settings.baseten_base_url,
         model=settings.baseten_model,
         system_prompt=system_prompt or settings.agent_system_prompt or None,
+        max_tokens=settings.baseten_max_tokens,
+        reasoning_effort=settings.baseten_reasoning_effort,
     )
     tts = InworldTTS(
         api_key_basic_b64=settings.inworld_api_key,

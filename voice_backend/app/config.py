@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     baseten_api_key: str = ""
     baseten_base_url: str = "https://inference.baseten.co/v1"
     baseten_model: str = "Qwen/Qwen3-235B-A22B-Instruct-2507"
+    # How much the model "thinks" before answering: "none", "high", "max" (depends on the model). Empty = the
+    # model's default. Hidden reasoning is slow and counts against the reply budget, so a voice agent wants "none".
+    baseten_reasoning_effort: str = "none"
+    # Budget for one spoken reply (also covers hidden reasoning, if the model still does some).
+    baseten_max_tokens: int = 512
 
     # Inworld (TTS, and STT when ASR_PROVIDER=inworld)
     inworld_api_key: str = ""
