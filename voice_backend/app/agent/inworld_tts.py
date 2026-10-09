@@ -18,12 +18,14 @@ class InworldTTS:
         voice_id: str = "Ashley",
         sample_rate_hz: int = 48000,
         language: Optional[str] = None,
+        instruction: Optional[str] = None,
     ) -> None:
         self._auth = f"Basic {api_key_basic_b64}"
         self._model = model_id
         self._voice = voice_id
         self._sr = sample_rate_hz
         self._language = language
+        self._instruction = (instruction or "").strip() or None
         self._url = "https://api.inworld.ai/tts/v1/voice:stream"
         self._active_resp: Optional[httpx.Response] = None
         self._stop_evt = asyncio.Event()
@@ -67,6 +69,9 @@ class InworldTTS:
         }
         if self._language:
             payload["language"] = self._language
+        if self._instruction:
+            # Request-level tone steering for this segment (ignored by inworld-tts-2-flash)
+            payload["instruction"] = self._instruction
 
         headers = {
             "Authorization": self._auth,
