@@ -99,6 +99,15 @@ class AgentSession:
         self._pcm_task = asyncio.create_task(self._pump_pcm(), name="agent_pcm")
         await self._fennec.start(on_final=on_final, on_vad=on_vad_inner)
 
+    async def speak_first(self, cue: str) -> None:
+        """Make the agent open the conversation (phone calls). `cue` is a stage direction only the LLM sees."""
+        cue = (cue or "").strip()
+        if not cue:
+            return
+        async with self._hist_lock:
+            self._history.append({"role": "user", "content": cue})
+        self._speak_task = asyncio.create_task(self._generate_and_stream(cue), name="agent_speak")
+
     async def _pump_pcm(self):
         try:
             while not self._closed.is_set():
