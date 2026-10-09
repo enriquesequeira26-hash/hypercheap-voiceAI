@@ -22,6 +22,7 @@ from .agent.protocol import (
 )
 from .agent.session import AgentSession
 from .config import settings
+from .twilio_bridge import router as twilio_router
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("hypercheap.app")
@@ -176,5 +177,8 @@ async def ws_agent(ws: WebSocket):
         with contextlib.suppress(Exception):
             await ws.close()
 
+
+# Phone calls (Twilio). Registered before the static mount so its routes are not shadowed.
+app.include_router(twilio_router)
 
 app.mount("/", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static"), html=True), name="static")
