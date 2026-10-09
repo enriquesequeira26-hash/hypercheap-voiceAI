@@ -7,6 +7,8 @@ from typing import AsyncIterator, Optional
 
 import httpx
 
+from .pronunciation import Pronouncer
+
 logger = logging.getLogger("hypercheap.inworld")
 
 
@@ -19,6 +21,7 @@ class InworldTTS:
         sample_rate_hz: int = 48000,
         language: Optional[str] = None,
         instruction: Optional[str] = None,
+        pronunciations: Optional[str] = None,
     ) -> None:
         self._auth = f"Basic {api_key_basic_b64}"
         self._model = model_id
@@ -26,6 +29,8 @@ class InworldTTS:
         self._sr = sample_rate_hz
         self._language = language
         self._instruction = (instruction or "").strip() or None
+        # Words the voice reads wrong, respelled only for the audio (see pronunciation.py)
+        self._pronouncer = Pronouncer(pronunciations)
         self._url = "https://api.inworld.ai/tts/v1/voice:stream"
         self._active_resp: Optional[httpx.Response] = None
         self._stop_evt = asyncio.Event()
@@ -59,7 +64,7 @@ class InworldTTS:
 
         # LINEAR16: every streamed chunk carries its own 44-byte WAV header (stripped below).
         payload: dict = {
-            "text": text,
+            "text": self._pronouncer.apply(text),
             "voiceId": self._voice,
             "modelId": self._model,
             "audioConfig": {
