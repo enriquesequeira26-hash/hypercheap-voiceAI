@@ -41,6 +41,18 @@ class Settings(BaseSettings):
     # Agent persona. Empty = use the default prompt in agent/llm_client.py
     agent_system_prompt: str = ""
 
+    # Twilio phone calls (optional). Calls stay disabled until the first three are set.
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    # Your Twilio number in international format, e.g. +15551234567
+    twilio_phone_number: str = ""
+    # A secret you choose. Required to place outbound calls (POST /twilio/call and the /llamar page).
+    call_api_key: str = ""
+    # Comma-separated numbers that may be called, in international format. Empty = any number.
+    twilio_allowed_numbers: str = ""
+    # Public https address of this deployment as Twilio reaches it. Empty = taken from the request.
+    public_base_url: str = ""
+
     def missing_keys(self) -> list[str]:
         """Names of the required env vars that are not set (never returns values)."""
         required = {
