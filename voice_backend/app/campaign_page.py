@@ -236,16 +236,21 @@ function playChunk(s,buf){
 function stopAudio(s){s.sources.forEach(x=>{try{x.stop()}catch(e){}});s.sources=[];s.playAt=0}
 async function endRehearsal(error){
   const s=reh;if(!s||s.closed)return;s.closed=true;s.live=false;
-  try{if(s.ws&&s.ws.readyState===1)s.ws.send(JSON.stringify({type:'stop'}))}catch(e){}
-  try{s.ws&&s.ws.close()}catch(e){}
   stopAudio(s);try{s.stream&&s.stream.getTracks().forEach(t=>t.stop())}catch(e){}
+  if(!error&&s.ws&&s.ws.readyState===1){
+    // Ask the server to finish and wait until it closes: it saves the transcript before closing.
+    $('rStatus').textContent='Guardando el ensayo…';
+    await new Promise(done=>{const t=setTimeout(done,6000);s.ws.onclose=()=>{clearTimeout(t);done()};
+      try{s.ws.send(JSON.stringify({type:'stop'}))}catch(e){clearTimeout(t);done()}});
+  }
+  try{s.ws&&s.ws.close()}catch(e){}
   try{s.ctx&&s.ctx.close()}catch(e){}
   reh=null;
   if(error){$('rehearsal').hidden=true;running=false;render();say(error,true);return}
   $('rStatus').textContent='Ensayo terminado. Analizando la llamada…';
   let snap=null;const t0=Date.now();
   while(Date.now()-t0<90000){await sleep(2500);
-    try{snap=await (await api('/llamada/'+encodeURIComponent(s.id)+(Date.now()-t0>30000?'?forzar=1':''))).json()}catch(e){continue}
+    try{snap=await (await api('/llamada/'+encodeURIComponent(s.id)+(Date.now()-t0>10000?'?forzar=1':''))).json()}catch(e){continue}
     if(snap.fase==='terminada')break}
   running=false;$('rehearsal').hidden=true;
   if(snap&&snap.fase==='terminada'){live[s.id]=snap;render();say('Ensayo terminado: '+(snap.resultado||snap.estado_gestion||'sin resultado')+'.');detail(s.id)}

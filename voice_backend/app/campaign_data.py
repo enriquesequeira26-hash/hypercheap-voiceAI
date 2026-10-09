@@ -473,6 +473,8 @@ async def call_snapshot(cid: str, force: bool = False) -> dict:
     waited = (now_local() - started).total_seconds()
     # Twilio's status callback is the normal end signal; the timeout covers a callback that never arrives.
     ended = bool(status) or (stream and stream.get("terminada") and waited > 90) or waited > 900
+    # A browser rehearsal has no Twilio callback: if its closing save never arrived, close it with what was kept.
+    ended = ended or (rehearsal and force and bool(stream))
     if not ended:
         return {"fase": "en_llamada" if stream else "marcando", "callSid": call_sid, "inicio": attempt["inicio"]}
     if status and stream and not stream.get("terminada") and waited < 900 and not force:

@@ -435,12 +435,13 @@ async def ws_twilio(ws: WebSocket):
     finally:
         for timer in timers:
             timer.cancel()
-        if agent is not None:
-            with contextlib.suppress(Exception):
-                await agent.close()
+        # Save first: once Twilio closes the connection the platform may stop this function at any moment.
         flush_reply(interrupted=True)
         ended_by = ended_by or "cliente"
         await save(final=True)
+        if agent is not None:
+            with contextlib.suppress(Exception):
+                await agent.close()
         with contextlib.suppress(Exception):
             await ws.close()
 

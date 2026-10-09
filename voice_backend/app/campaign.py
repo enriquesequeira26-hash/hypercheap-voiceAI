@@ -275,12 +275,31 @@ async def ws_ensayo(ws: WebSocket):
     async def on_token(tok: str) -> None:
         transcript.token(tok)
 
+    async def save(final: bool) -> None:
+        """Keeps the transcript in storage as the call goes, so nothing is lost if the connection drops."""
+        doc = {
+            "cid": cid,
+            "callSid": sid,
+            "direccion": "ensayo en navegador",
+            "duracion_s": transcript.seconds,
+            "recordingSid": "",
+            "transcripcion": transcript.lines,
+            "terminada": final,
+        }
+        try:
+            await cd.save_stream(cid, sid, doc)
+            if final:
+                await cd.save_status(cid, sid, "completed", str(transcript.seconds))
+        except Exception as e:
+            log.error("[campaign] could not save the rehearsal: %s", e)
+
     async def on_turn_done() -> None:
         text = transcript.flush()
         if text:
             await send({"type": "agente", "texto": text})
         if agent is not None and agent.end_requested:
             await send({"type": "end"})
+        await save(final=False)
 
     async def on_audio(pcm: bytes) -> None:
         await ws.send_bytes(pcm)
@@ -338,25 +357,13 @@ async def ws_ensayo(ws: WebSocket):
     finally:
         for timer in timers:
             timer.cancel()
+        if cid:
+            # Save first: once the browser closes the connection the platform may stop this function at any moment.
+            transcript.flush(interrupted=True)
+            await save(final=True)
         if agent is not None:
             with contextlib.suppress(Exception):
                 await agent.close()
-        if cid:
-            transcript.flush(interrupted=True)
-            doc = {
-                "cid": cid,
-                "callSid": sid,
-                "direccion": "ensayo en navegador",
-                "duracion_s": transcript.seconds,
-                "recordingSid": "",
-                "transcripcion": transcript.lines,
-                "terminada": True,
-            }
-            try:
-                await cd.save_stream(cid, sid, doc)
-                await cd.save_status(cid, sid, "completed", str(transcript.seconds))
-            except Exception as e:
-                log.error("[campaign] could not save the rehearsal: %s", e)
         with contextlib.suppress(Exception):
             await ws.close()
 
