@@ -40,6 +40,7 @@ export default function App() {
   const [assistantDraft, setAssistantDraft] = useState('')
 
   const [isThinking, setIsThinking] = useState(false); // Tracks if LLM is active
+  const [errorDetail, setErrorDetail] = useState('') // Backend-reported error, shown under the mic
 
   const assistantDraftRef = useRef(assistantDraft)
   useEffect(() => { assistantDraftRef.current = assistantDraft }, [assistantDraft])
@@ -126,6 +127,7 @@ export default function App() {
     setChat([])
     setAssistantDraft('')
     setIsThinking(false);
+    setErrorDetail('')
     setStatus('connecting')
 
     const onAsr = (t: string) => {
@@ -149,7 +151,11 @@ export default function App() {
       if (s === 'connected') setStatus('connecting');
       else if (s === 'initializing') setStatus('initializing');
       else if (s === 'ready') setStatus('ready');
-      else if (s === 'error') setStatus('error');
+      else if (s.startsWith('error')) {
+        // Backend sends 'error: <detail>'; a bare 'error' comes from the socket itself
+        setErrorDetail(s.replace(/^error:?\s*/, ''))
+        setStatus('error');
+      }
     }
 
     const onToken = (tok: string) => {
@@ -213,7 +219,7 @@ export default function App() {
   }
 
   async function toggleMic() {
-    if (['connecting', 'initializing', 'stopping', 'error'].includes(status)) {
+    if (['connecting', 'initializing', 'stopping'].includes(status)) {
         return;
     }
     if (active) await stop()
@@ -223,15 +229,15 @@ export default function App() {
   // Updated labels to match the actual activity
   const badgeText = (() => {
     switch (status) {
-      case 'idle': return 'Idle';
-      case 'connecting': return 'Connecting…'; // WS connection
-      case 'initializing': return 'Initializing…'; // Waiting for Fennec/VAD
-      case 'ready': return 'Listening…'; // Actively listening (VAD on)
-      case 'thinking': return 'Thinking…'; // Waiting for LLM
-      case 'speaking': return 'Speaking…'; // AI is talking
-      case 'stopping': return 'Stopping…';
+      case 'idle': return 'En espera';
+      case 'connecting': return 'Conectando…'; // WS connection
+      case 'initializing': return 'Iniciando…'; // Waiting for Fennec/VAD
+      case 'ready': return 'Escuchando…'; // Actively listening (VAD on)
+      case 'thinking': return 'Pensando…'; // Waiting for LLM
+      case 'speaking': return 'Hablando…'; // AI is talking
+      case 'stopping': return 'Deteniendo…';
       case 'error': return 'Error';
-      default: return 'Waiting…';
+      default: return 'Esperando…';
     }
   })();
 
@@ -245,7 +251,7 @@ export default function App() {
         <div className="brand">
           <div>
             <div className="title">Hyper-Cheap Voice Agent</div>
-            <div className="caption">Fennec ASR → Baseten Qwen → Inworld TTS</div>
+            <div className="caption">Inworld STT → Baseten Qwen → Inworld TTS</div>
           </div>
         </div>
         <button className="icon-btn" onClick={toggle} aria-label="Toggle theme">
@@ -260,21 +266,26 @@ export default function App() {
               className={['mic', active ? 'active' : ''].join(' ')}
               onClick={toggleMic}
               aria-pressed={active}
-              title={active ? 'Click to stop' : 'Click to start'}
-              disabled={['connecting', 'initializing', 'stopping', 'error'].includes(status)}
+              title={active ? 'Clic para detener' : 'Clic para iniciar'}
+              disabled={['connecting', 'initializing', 'stopping'].includes(status)}
             >
               🎤
             </button>
             <div className="badge">{badgeText}</div>
           </div>
           <div className="caption" style={{marginTop: 10}}>
-            Click once to start, converse freely (interrupts supported); click again to end.
+            Haga clic una vez para iniciar y converse libremente (puede interrumpir); haga clic de nuevo para terminar.
           </div>
+          {status === 'error' && (
+            <div className="caption" role="alert" style={{marginTop: 10}}>
+              {errorDetail || 'No se pudo conectar con el agente.'} Haga clic en el micrófono para reintentar.
+            </div>
+          )}
         </div>
 
         <div className="card transcript" ref={transcriptRef}>
           {chat.length === 0 && !assistantDraft ? (
-            <span className="caption">Transcript will appear here…</span>
+            <span className="caption">La transcripción aparecerá aquí…</span>
           ) : (
             <div style={{display:'grid', gap: '10px'}}>
               {chat.map((m, i) => (
@@ -286,7 +297,7 @@ export default function App() {
                   padding: '10px 12px',
                   maxWidth: '85%',
                 }}>
-                  <div className="caption" style={{marginBottom: 4}}>{m.role}</div>
+                  <div className="caption" style={{marginBottom: 4}}>{m.role === 'user' ? 'usted' : 'asistente'}</div>
                   <div>{m.content}</div>
                 </div>
               ))}
@@ -300,7 +311,7 @@ export default function App() {
                   maxWidth: '85%',
                   opacity: 0.9
                 }}>
-                  <div className="caption" style={{marginBottom: 4}}>assistant</div>
+                  <div className="caption" style={{marginBottom: 4}}>asistente</div>
                   <div>{assistantDraft}</div>
                 </div>
               )}
