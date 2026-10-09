@@ -95,6 +95,7 @@ async def ws_agent(ws: WebSocket):
         voice_id=settings.inworld_voice_id,
         sample_rate_hz=settings.inworld_sample_rate,
         language=settings.inworld_language or None,
+        instruction=settings.inworld_instruction or None,
     )
     agent = AgentSession(asr, llm, tts)
     session_started = False
