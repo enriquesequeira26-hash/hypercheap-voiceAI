@@ -42,6 +42,9 @@ class AgentSession:
         self._last_final_ms = 0.0
         self._debounce_ms = 220.0
 
+        # Set when the LLM ends a reply with the hang-up marker (phone calls). The marker is never spoken.
+        self.end_requested = False
+
     async def start(
         self,
         on_asr_final: Optional[Callable[[str], Awaitable[None]]] = None,
@@ -143,6 +146,8 @@ class AgentSession:
     # Very short phrases are spoken together with the next sentence so the speech flows.
     _MIN_FIRST_SEG = 24
     _MIN_SEG = 60
+    # Hang-up marker the LLM may append to its last reply: <<FIN>>
+    _END_RE = re.compile(r"<<?\s*FIN\s*>>?|\[\s*FIN\s*\]", re.IGNORECASE)
 
     async def _generate_and_stream(self, user_text: str) -> None:
         utext = (user_text or "").strip()
@@ -180,6 +185,9 @@ class AgentSession:
                         logger.info("[latency] llm first_token=%.3fs", first_tok_at - t0)
 
                     buf += tok
+                    if self._END_RE.search(buf):
+                        buf = self._END_RE.sub("", buf)
+                        self.end_requested = True
                     while True:
                         min_len = self._MIN_SEG if spoke else self._MIN_FIRST_SEG
                         ends = (m.end() for m in self._SENT_END.finditer(buf))
@@ -236,7 +244,7 @@ class AgentSession:
             await asyncio.gather(segment_writer(), tts_consumer())
 
             # Only append ASSISTANT if the turn completed successfully
-            reply_text = "".join(reply_parts).strip()
+            reply_text = self._END_RE.sub("", "".join(reply_parts)).strip()
             if reply_text:
                 async with self._hist_lock:
                     self._history.append({"role": "assistant", "content": reply_text})
