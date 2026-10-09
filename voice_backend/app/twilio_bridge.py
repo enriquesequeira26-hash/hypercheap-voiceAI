@@ -165,6 +165,7 @@ def build_phone_agent(system_prompt: Optional[str] = None, tts_rate: int = PHONE
         sample_rate_hz=tts_rate,
         language=settings.inworld_language or None,
         instruction=settings.inworld_instruction or None,
+        pronunciations=settings.tts_pronunciations or None,
     )
     return AgentSession(asr, llm, tts)
 

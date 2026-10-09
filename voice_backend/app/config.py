@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     inworld_language: str = "es"
     # Tone/delivery direction for TTS, written in English. Only inworld-tts-2 honours it. Empty = none.
     inworld_instruction: str = ""
+    # Extra pronunciation fixes for the voice: "word=how it sounds" pairs separated by ";".
+    # Example: "Gonher=Gonér; Heavy Duty=jevi diuti". "diesel" -> "dísel" is built in (agent/pronunciation.py).
+    tts_pronunciations: str = ""
 
     # Agent persona. Empty = use the default prompt in agent/llm_client.py
     agent_system_prompt: str = ""
