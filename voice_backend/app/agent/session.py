@@ -129,7 +129,11 @@ class AgentSession:
             with contextlib.suppress(Exception):
                 self._in_q.put_nowait(pcm_le16)
 
-    _PUNCT = re.compile(r"([.!?…]+|\n)")
+    # A segment ends at sentence punctuation followed by whitespace (or a newline), never mid-word.
+    _SENT_END = re.compile(r"[.!?…]+[”’»)\]]*\s+|\n+")
+    # Very short phrases are spoken together with the next sentence so the speech flows.
+    _MIN_FIRST_SEG = 24
+    _MIN_SEG = 60
 
     async def _generate_and_stream(self, user_text: str) -> None:
         utext = (user_text or "").strip()
@@ -147,7 +151,8 @@ class AgentSession:
         reply_parts: list[str] = []
 
         async def segment_writer():
-            buf: list[str] = []
+            buf = ""
+            spoke = False
             char_budget = 250
             t0 = time.perf_counter()
             first_tok_at: Optional[float] = None
@@ -165,13 +170,23 @@ class AgentSession:
                         first_tok_at = time.perf_counter()
                         logger.info("[latency] llm first_token=%.3fs", first_tok_at - t0)
 
-                    buf.append(tok)
-                    s = "".join(buf)
-                    if len(s) >= char_budget or self._PUNCT.search(s):
-                        await seg_q.put(s.strip())
-                        buf.clear()
+                    buf += tok
+                    while True:
+                        min_len = self._MIN_SEG if spoke else self._MIN_FIRST_SEG
+                        ends = (m.end() for m in self._SENT_END.finditer(buf))
+                        cut = next((e for e in ends if e >= min_len), None)
+                        if cut is None and len(buf) >= char_budget:
+                            # Long run without a sentence end: break at the last space, never inside a word
+                            sp = buf.rfind(" ", 0, char_budget)
+                            cut = sp + 1 if sp > 0 else None
+                        if cut is None:
+                            break
+                        seg, buf = buf[:cut].strip(), buf[cut:]
+                        if seg:
+                            await seg_q.put(seg)
+                            spoke = True
 
-                tail = "".join(buf).strip()
+                tail = buf.strip()
                 if tail:
                     await seg_q.put(tail)
             except asyncio.CancelledError:
