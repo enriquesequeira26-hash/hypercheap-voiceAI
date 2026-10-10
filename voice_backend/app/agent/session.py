@@ -9,6 +9,7 @@ from .fennec_ws import FennecWSClient
 from .inworld_stt import InworldSTTClient
 from .inworld_tts import InworldTTS
 from .llm_client import BasetenChat
+from .pauses import SegmentTrimmer, pause_after_ms, silence
 
 logger = logging.getLogger("hypercheap.session")
 
@@ -143,9 +144,11 @@ class AgentSession:
 
     # A segment ends at sentence punctuation followed by whitespace (or a newline), never mid-word.
     _SENT_END = re.compile(r"[.!?…]+[”’»)\]]*\s+|\n+")
-    # Very short phrases are spoken together with the next sentence so the speech flows.
+    # The first segment is the opening sentence (at least this long), so the voice starts quickly. Everything
+    # after it goes to the TTS in one piece: the voice only sounds continuous inside a single request.
     _MIN_FIRST_SEG = 24
-    _MIN_SEG = 60
+    # A reply longer than this is split again, at a sentence end.
+    _MAX_SEG = 320
     # Hang-up marker the LLM may append to its last reply: <<FIN>>
     _END_RE = re.compile(r"<<?\s*FIN\s*>>?|\[\s*FIN\s*\]", re.IGNORECASE)
 
@@ -167,7 +170,6 @@ class AgentSession:
         async def segment_writer():
             buf = ""
             spoke = False
-            char_budget = 250
             t0 = time.perf_counter()
             first_tok_at: Optional[float] = None
 
@@ -189,13 +191,16 @@ class AgentSession:
                         buf = self._END_RE.sub("", buf)
                         self.end_requested = True
                     while True:
-                        min_len = self._MIN_SEG if spoke else self._MIN_FIRST_SEG
-                        ends = (m.end() for m in self._SENT_END.finditer(buf))
-                        cut = next((e for e in ends if e >= min_len), None)
-                        if cut is None and len(buf) >= char_budget:
-                            # Long run without a sentence end: break at the last space, never inside a word
-                            sp = buf.rfind(" ", 0, char_budget)
-                            cut = sp + 1 if sp > 0 else None
+                        cut = None
+                        if not spoke:
+                            ends = (m.end() for m in self._SENT_END.finditer(buf))
+                            cut = next((e for e in ends if e >= self._MIN_FIRST_SEG), None)
+                        if cut is None and len(buf) >= self._MAX_SEG:
+                            # Long reply: break at the last sentence end that fits, else at the last space
+                            # (never inside a word).
+                            fits = [m.end() for m in self._SENT_END.finditer(buf) if m.end() <= self._MAX_SEG]
+                            sp = buf.rfind(" ", 0, self._MAX_SEG)
+                            cut = fits[-1] if fits else (sp + 1 if sp > 0 else None)
                         if cut is None:
                             break
                         seg, buf = buf[:cut].strip(), buf[cut:]
@@ -226,14 +231,20 @@ class AgentSession:
                 await seg_q.put(None)
 
         async def tts_consumer():
+            rate = int(getattr(self._tts, "sample_rate", 0) or 0)
+            pause_ms = 0  # pause owed before the next segment, set when the previous one ends
             try:
                 while True:
                     seg = await seg_q.get()
                     if seg is None:
                         break
                     got_audio = False
+                    # The TTS pads every segment with silence; cut it and join segments with a natural pause.
+                    trimmer = SegmentTrimmer(rate) if rate else None
                     t1 = time.perf_counter()
                     async for audio in self._tts.synthesize(seg):
+                        if trimmer is not None:
+                            audio = trimmer.feed(audio)
                         if not audio:
                             continue
                         if not got_audio:
@@ -241,8 +252,16 @@ class AgentSession:
                             if self._on_audio_start:
                                 await self._on_audio_start()
                             logger.info("[latency] tts(first_audio, seg)=%.3fs", time.perf_counter() - t1)
+                            if pause_ms and rate:
+                                audio = silence(pause_ms, rate) + audio
                         if self._on_audio_chunk:
                             await self._on_audio_chunk(audio)
+                    if trimmer is not None and got_audio:
+                        tail = trimmer.finish()
+                        if tail and self._on_audio_chunk:
+                            await self._on_audio_chunk(tail)
+                    if got_audio:
+                        pause_ms = pause_after_ms(seg)
                     if self._on_segment_done:
                         await self._on_segment_done()
             except asyncio.CancelledError:

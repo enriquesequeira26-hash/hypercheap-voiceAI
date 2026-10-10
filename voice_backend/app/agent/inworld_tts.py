@@ -42,6 +42,11 @@ class InworldTTS:
             limits=httpx.Limits(max_keepalive_connections=10, max_connections=20, keepalive_expiry=30),
         )
 
+    @property
+    def sample_rate(self) -> int:
+        """Rate of the PCM16 mono audio that synthesize() yields."""
+        return self._sr
+
     async def close(self) -> None:
         try:
             await self._client.aclose()
