@@ -204,7 +204,10 @@ async function rehearse(row){
   const s=reh={id:row.id,sources:[],playAt:0,rate:48000,closed:false};
   try{
     s.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,channelCount:1}});
-    s.ctx=new (window.AudioContext||window.webkitAudioContext)();await s.ctx.resume();
+    const AC=window.AudioContext||window.webkitAudioContext;s.ctx=new AC();await s.ctx.resume();
+    // Playback gets its own context at the rate of the agent's audio: chunks then join sample by sample,
+    // without the small clicks of resampling every chunk on its own.
+    try{s.out=new AC({sampleRate:48000});await s.out.resume()}catch(e){s.out=s.ctx}
     const url=URL.createObjectURL(new Blob([CAPTURE],{type:'application/javascript'}));
     await s.ctx.audioWorklet.addModule(url);URL.revokeObjectURL(url);
     s.node=new AudioWorkletNode(s.ctx,'cap');s.mic=s.ctx.createMediaStreamSource(s.stream);s.mic.connect(s.node);
@@ -219,7 +222,7 @@ async function rehearse(row){
       else if(m.type==='cliente')rLine('Cliente',m.texto);
       else if(m.type==='agente')rLine('Agente',m.texto);
       else if(m.type==='clear')stopAudio(s);
-      else if(m.type==='end'){$('rStatus').textContent='El agente se despidió; colgando…';setTimeout(()=>endRehearsal(''),Math.max(0,(s.playAt-s.ctx.currentTime)*1000)+600)}
+      else if(m.type==='end'){$('rStatus').textContent='El agente se despidió; colgando…';setTimeout(()=>endRehearsal(''),Math.max(0,(s.playAt-(s.out||s.ctx).currentTime)*1000)+600)}
       else if(m.type==='error')endRehearsal(m.detalle||'Error en el ensayo.');
     };
     s.ws.onerror=()=>endRehearsal('No se pudo conectar el ensayo.');
@@ -227,13 +230,15 @@ async function rehearse(row){
   }catch(e){endRehearsal(e&&e.name==='NotAllowedError'?'Debe permitir el micrófono para ensayar.':(e.message||'No se pudo iniciar el ensayo.'))}
 }
 function playChunk(s,buf){
-  if(s.closed)return;const n=buf.byteLength>>1;if(!n)return;
+  if(s.closed)return;const n=buf.byteLength>>1;if(!n)return;const o=s.out||s.ctx,sr=o.sampleRate;
   const pcm=new Int16Array(buf,0,n),f=new Float32Array(n);for(let i=0;i<n;i++)f[i]=pcm[i]/32768;
-  const ab=s.ctx.createBuffer(1,n,s.rate);ab.copyToChannel(f,0);const src=s.ctx.createBufferSource();src.buffer=ab;src.connect(s.ctx.destination);
-  const at=Math.max(s.ctx.currentTime+0.03,s.playAt);src.start(at);s.playAt=at+ab.duration;s.sources.push(src);
+  const ab=o.createBuffer(1,n,s.rate);ab.copyToChannel(f,0);const src=o.createBufferSource();src.buffer=ab;src.connect(o.destination);
+  // Schedule in whole frames so each chunk starts exactly where the previous one ends.
+  const frame=Math.max(Math.ceil((o.currentTime+0.05)*sr),s.playFrame||0);src.start(frame/sr);
+  s.playFrame=frame+Math.round(n*sr/s.rate);s.playAt=s.playFrame/sr;s.sources.push(src);
   src.onended=()=>{s.sources=s.sources.filter(x=>x!==src)};
 }
-function stopAudio(s){s.sources.forEach(x=>{try{x.stop()}catch(e){}});s.sources=[];s.playAt=0}
+function stopAudio(s){s.sources.forEach(x=>{try{x.stop()}catch(e){}});s.sources=[];s.playAt=0;s.playFrame=0}
 async function endRehearsal(error){
   const s=reh;if(!s||s.closed)return;s.closed=true;s.live=false;
   stopAudio(s);try{s.stream&&s.stream.getTracks().forEach(t=>t.stop())}catch(e){}
@@ -244,6 +249,7 @@ async function endRehearsal(error){
       try{s.ws.send(JSON.stringify({type:'stop'}))}catch(e){clearTimeout(t);done()}});
   }
   try{s.ws&&s.ws.close()}catch(e){}
+  try{s.out&&s.out!==s.ctx&&s.out.close()}catch(e){}
   try{s.ctx&&s.ctx.close()}catch(e){}
   reh=null;
   if(error){$('rehearsal').hidden=true;running=false;render();say(error,true);return}
