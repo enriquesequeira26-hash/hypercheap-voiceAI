@@ -3,7 +3,14 @@ from array import array
 
 import pytest
 
-from app.agent.pauses import CLAUSE_PAUSE_MS, SENTENCE_PAUSE_MS, SegmentTrimmer, pause_after_ms, silence
+from app.agent.pauses import (
+    CLAUSE_PAUSE_MS,
+    MAX_INNER_PAUSE_MS,
+    SENTENCE_PAUSE_MS,
+    SegmentTrimmer,
+    pause_after_ms,
+    silence,
+)
 from app.agent.session import AgentSession
 
 RATE = 8000
@@ -57,8 +64,14 @@ def test_pauses_inside_a_segment_are_kept():
     assert 770 <= ms_of(out) <= 770 + 20 + 40 + 10
 
 
+def test_a_pause_that_runs_too_long_is_shortened():
+    out = trim(tone(300) + quiet(650) + tone(200) + quiet(900))
+    assert MAX_INNER_PAUSE_MS - 5 <= longest_silence_ms(out) <= MAX_INNER_PAUSE_MS + 5
+    assert 300 + MAX_INNER_PAUSE_MS + 200 <= ms_of(out) <= 300 + MAX_INNER_PAUSE_MS + 200 + 50
+
+
 def test_chunking_does_not_change_the_result():
-    pcm = quiet(137) + tone(333) + quiet(211) + tone(123) + quiet(777)
+    pcm = quiet(137) + tone(333) + quiet(211) + tone(123) + quiet(680) + tone(90) + quiet(777)
     assert trim(pcm, 100) == trim(pcm, 4096) == trim(pcm, len(pcm))
 
 
